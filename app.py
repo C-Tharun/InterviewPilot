@@ -1,70 +1,98 @@
 import os
 import json
 from flask import Flask, render_template, request, jsonify, session
-from openai import OpenAI
 import secrets
-
-# Reference: blueprint:python_openai
-# the newest OpenAI model is "gpt-5" which was released August 7, 2025.
-# do not change this unless explicitly requested by the user
+from groq import Groq  # ← FREE API client
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+# Groq API key (FREE)
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY environment variable is required. Please set it in Replit Secrets.")
+if not GROQ_API_KEY:
+    raise RuntimeError(
+        "GROQ_API_KEY environment variable is required. Please add it in Replit Secrets."
+    )
 
-openai = OpenAI(api_key=OPENAI_API_KEY)
+# Initialize Groq client
+groq_client = Groq(api_key=GROQ_API_KEY)
+
+# Use FREE Llama 3.3 70B model (fast + powerful)
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 JOB_ROLES = {
     "software_engineer": {
-        "name": "Software Engineer",
-        "description": "Technical interview focused on algorithms, system design, and coding",
-        "areas": ["algorithms", "data structures", "system design", "coding practices"]
+        "name":
+        "Software Engineer",
+        "description":
+        "Technical interview focused on algorithms, system design, and coding",
+        "areas":
+        ["algorithms", "data structures", "system design", "coding practices"]
     },
     "data_analyst": {
-        "name": "Data Analyst",
-        "description": "Interview covering data analysis, SQL, statistics, and visualization",
-        "areas": ["SQL", "data analysis", "statistics", "data visualization", "business insights"]
+        "name":
+        "Data Analyst",
+        "description":
+        "Interview covering data analysis, SQL, statistics, and visualization",
+        "areas": [
+            "SQL", "data analysis", "statistics", "data visualization",
+            "business insights"
+        ]
     },
     "sales": {
-        "name": "Sales Representative",
-        "description": "Sales interview focusing on communication, persuasion, and customer relations",
-        "areas": ["sales techniques", "customer relationship", "negotiation", "product knowledge"]
+        "name":
+        "Sales Representative",
+        "description":
+        "Sales interview focusing on communication, persuasion, and customer relations",
+        "areas": [
+            "sales techniques", "customer relationship", "negotiation",
+            "product knowledge"
+        ]
     },
     "product_manager": {
-        "name": "Product Manager",
-        "description": "Product management interview on strategy, prioritization, and user focus",
-        "areas": ["product strategy", "user research", "prioritization", "stakeholder management"]
+        "name":
+        "Product Manager",
+        "description":
+        "Product management interview on strategy, prioritization, and user focus",
+        "areas": [
+            "product strategy", "user research", "prioritization",
+            "stakeholder management"
+        ]
     },
     "marketing": {
-        "name": "Marketing Specialist",
-        "description": "Marketing interview covering campaigns, analytics, and creative strategy",
-        "areas": ["marketing strategy", "campaign management", "analytics", "brand positioning"]
+        "name":
+        "Marketing Specialist",
+        "description":
+        "Marketing interview covering campaigns, analytics, and creative strategy",
+        "areas": [
+            "marketing strategy", "campaign management", "analytics",
+            "brand positioning"
+        ]
     }
 }
+
 
 @app.route('/')
 def index():
     return render_template('index.html', job_roles=JOB_ROLES)
 
+
 @app.route('/start_interview', methods=['POST'])
 def start_interview():
     data = request.json
     role = data.get('role')
-    
+
     if role not in JOB_ROLES:
         return jsonify({"error": "Invalid role"}), 400
-    
+
     session['role'] = role
     session['conversation_history'] = []
     session['question_count'] = 0
     session['interview_started'] = True
-    
+
     role_info = JOB_ROLES[role]
-    
+
     system_prompt = f"""You are an expert interviewer conducting a mock interview for a {role_info['name']} position.
 Your goal is to:
 1. Ask ONE relevant question at a time based on the role's key areas: {', '.join(role_info['areas'])}
@@ -80,54 +108,54 @@ Your goal is to:
 Start with an opening question appropriate for this role."""
 
     try:
-        response = openai.chat.completions.create(
-            model="gpt-5",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Please ask your first interview question."}
-            ]
-        )
-        
+        response = groq_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{
+                "role": "system",
+                "content": system_prompt
+            }, {
+                "role": "user",
+                "content": "Please ask your first interview question."
+            }])
+
         question = response.choices[0].message.content
-        
+
         session['conversation_history'].append({
             "role": "assistant",
             "content": question
         })
         session['question_count'] = 1
         session.modified = True
-        
+
         return jsonify({
             "question": question,
             "question_count": 1,
             "role_name": role_info['name']
         })
-        
+
     except Exception as e:
         app.logger.error(f"Error starting interview: {str(e)}")
         return jsonify({"error": f"Failed to start interview: {str(e)}"}), 500
+
 
 @app.route('/send_response', methods=['POST'])
 def send_response():
     if not session.get('interview_started'):
         return jsonify({"error": "No active interview"}), 400
-    
+
     data = request.json
     user_response = data.get('response', '').strip()
-    
+
     if not user_response:
         return jsonify({"error": "Empty response"}), 400
-    
+
     role = session.get('role')
     role_info = JOB_ROLES[role]
     conversation_history = session.get('conversation_history', [])
     question_count = session.get('question_count', 0)
-    
-    conversation_history.append({
-        "role": "user",
-        "content": user_response
-    })
-    
+
+    conversation_history.append({"role": "user", "content": user_response})
+
     system_prompt = f"""You are an expert interviewer conducting a mock interview for a {role_info['name']} position.
 Key areas: {', '.join(role_info['areas'])}
 
@@ -142,47 +170,53 @@ Based on the candidate's response:
 Ask your next question or conclude the interview."""
 
     try:
-        messages = [{"role": "system", "content": system_prompt}] + conversation_history + [
-            {"role": "user", "content": "Based on my response, what's your next question or comment?"}
-        ]
-        
-        response = openai.chat.completions.create(
-            model="gpt-5",
-            messages=messages
-        )
-        
-        next_question = response.choices[0].message.content or ""
-        
+        messages = [{
+            "role": "system",
+            "content": system_prompt
+        }] + conversation_history + [{
+            "role":
+            "user",
+            "content":
+            "Based on my response, what's your next question or comment?"
+        }]
+
+        response = groq_client.chat.completions.create(model=MODEL_NAME,
+                                                       messages=messages)
+
+        next_question = response.choices[0].message.content
+
         conversation_history.append({
             "role": "assistant",
             "content": next_question
         })
-        
-        is_completed = "concludes our interview" in next_question.lower() or ("thank you" in next_question.lower() and question_count >= 5)
-        
+
+        is_completed = "concludes our interview" in next_question.lower() or (
+            "thank you" in next_question.lower() and question_count >= 5)
+
         session['conversation_history'] = conversation_history
         session['question_count'] = question_count + 1
         session.modified = True
-        
+
         return jsonify({
             "question": next_question,
             "question_count": question_count + 1,
             "is_completed": is_completed
         })
-        
+
     except Exception as e:
         app.logger.error(f"Error sending response: {str(e)}")
         return jsonify({"error": f"Failed to process response: {str(e)}"}), 500
+
 
 @app.route('/get_feedback', methods=['POST'])
 def get_feedback():
     if not session.get('interview_started'):
         return jsonify({"error": "No active interview"}), 400
-    
+
     role = session.get('role')
     role_info = JOB_ROLES[role]
     conversation_history = session.get('conversation_history', [])
-    
+
     feedback_prompt = f"""Analyze this mock interview for a {role_info['name']} position and provide comprehensive feedback.
 
 Interview transcript:
@@ -213,36 +247,35 @@ Provide detailed feedback in JSON format with these categories:
 }}"""
 
     try:
-        response = openai.chat.completions.create(
-            model="gpt-5",
-            messages=[
-                {"role": "system", "content": "You are an expert interview coach providing detailed, constructive feedback."},
-                {"role": "user", "content": feedback_prompt}
-            ],
-            response_format={"type": "json_object"}
-        )
-        
-        feedback = json.loads(response.choices[0].message.content or "{}")
-        
-        session.pop('interview_started', None)
-        session.pop('conversation_history', None)
-        session.pop('question_count', None)
-        session.modified = True
-        
+        response = groq_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{
+                "role":
+                "system",
+                "content":
+                "You are an expert interview coach providing detailed, constructive feedback."
+            }, {
+                "role": "user",
+                "content": feedback_prompt
+            }])
+
+        feedback_raw = response.choices[0].message.content
+        feedback = json.loads(feedback_raw)
+
+        session.clear()
         return jsonify(feedback)
-        
+
     except Exception as e:
         app.logger.error(f"Error generating feedback: {str(e)}")
-        return jsonify({"error": f"Failed to generate feedback: {str(e)}"}), 500
+        return jsonify({"error":
+                        f"Failed to generate feedback: {str(e)}"}), 500
+
 
 @app.route('/reset_interview', methods=['POST'])
 def reset_interview():
-    session.pop('interview_started', None)
-    session.pop('conversation_history', None)
-    session.pop('question_count', None)
-    session.pop('role', None)
-    session.modified = True
+    session.clear()
     return jsonify({"success": True})
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
