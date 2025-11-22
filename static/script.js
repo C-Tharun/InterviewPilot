@@ -3,61 +3,276 @@ let recognition = null;
 let currentRole = null;
 let interviewCompleted = false;
 let currentFeedback = null;
+let voiceBaseText = '';  // Store the text that was in the textarea when voice started
 
-if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
+// Initialize speech recognition
+function initializeSpeechRecognition() {
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;  // Keep listening continuously
+        recognition.interimResults = true;  // Enable interim results for real-time display
+        recognition.lang = 'en-US';
 
-    recognition.onresult = function(event) {
-        const transcript = event.results[0][0].transcript;
-        const userInput = document.getElementById('userInput');
-        userInput.value = (userInput.value + ' ' + transcript).trim();
-        updateCharCount();
-    };
+        recognition.onstart = function() {
+            console.log('Speech recognition started');
+            const userInput = document.getElementById('userInput');
+            if (userInput) {
+                userInput.placeholder = 'Listening... Speak now!';
+            }
+        };
 
-    recognition.onend = function() {
-        isListening = false;
-        const voiceBtn = document.getElementById('voiceBtn');
-        voiceBtn.classList.remove('listening');
-    };
+        recognition.onaudiostart = function() {
+            console.log('Audio capture started');
+        };
 
-    recognition.onerror = function(event) {
-        console.error('Speech recognition error:', event.error);
-        isListening = false;
-        const voiceBtn = document.getElementById('voiceBtn');
-        voiceBtn.classList.remove('listening');
-        if (event.error === 'not-allowed') {
-            alert('Microphone access denied. Please enable microphone permissions to use voice input.');
-        }
-    };
+        recognition.onaudioend = function() {
+            console.log('Audio capture ended');
+        };
+
+        recognition.onsoundstart = function() {
+            console.log('Sound detected');
+        };
+
+        recognition.onsoundend = function() {
+            console.log('Sound ended');
+        };
+
+        recognition.onspeechstart = function() {
+            console.log('Speech detected');
+        };
+
+        recognition.onspeechend = function() {
+            console.log('Speech ended');
+        };
+
+        recognition.onresult = function(event) {
+            console.log('Speech recognition result received, resultIndex:', event.resultIndex, 'results.length:', event.results.length);
+            
+            if (!event.results || event.results.length === 0) {
+                console.log('No results in event');
+                return;
+            }
+
+            let interimTranscript = '';
+            let finalTranscript = '';
+            const userInput = document.getElementById('userInput');
+
+            if (!userInput) {
+                console.error('userInput element not found');
+                return;
+            }
+
+            // Process all results from the last processed index
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                if (!event.results[i] || !event.results[i][0]) {
+                    continue;
+                }
+                const transcript = event.results[i][0].transcript;
+                const confidence = event.results[i][0].confidence;
+                console.log(`Result ${i}: transcript="${transcript}", isFinal=${event.results[i].isFinal}, confidence=${confidence}`);
+                
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript + ' ';
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+
+            console.log('Final transcript:', finalTranscript, 'Interim transcript:', interimTranscript);
+
+            // Update the base text with final transcripts (these are confirmed)
+            if (finalTranscript.trim()) {
+                voiceBaseText += finalTranscript;
+            }
+
+            // Update textarea with base text + interim transcript (for real-time display)
+            const displayText = (voiceBaseText + interimTranscript).trim();
+            userInput.value = displayText;
+            updateCharCount();
+            
+            // Reset placeholder if we have text
+            if (displayText) {
+                userInput.placeholder = 'Type your answer here...';
+            }
+            
+            // Scroll to bottom of textarea to see the latest text
+            setTimeout(() => {
+                userInput.scrollTop = userInput.scrollHeight;
+            }, 0);
+        };
+
+        recognition.onend = function() {
+            console.log('Speech recognition ended, isListening:', isListening);
+            // If user is still listening (button still active), restart recognition
+            if (isListening) {
+                setTimeout(() => {
+                    if (isListening) {
+                        try {
+                            console.log('Restarting speech recognition');
+                            recognition.start();
+                        } catch (e) {
+                            if (e.name !== 'InvalidStateError') {
+                                console.error('Recognition restart error:', e);
+                            }
+                        }
+                    }
+                }, 100);
+            } else {
+                // User manually stopped, finalize the text
+                const userInput = document.getElementById('userInput');
+                if (userInput) {
+                    userInput.value = voiceBaseText.trim();
+                    updateCharCount();
+                }
+            }
+        };
+
+        recognition.onerror = function(event) {
+            console.error('Speech recognition error:', event.error, 'Error details:', event);
+            const userInput = document.getElementById('userInput');
+            
+            // Don't stop on 'no-speech' error, just restart (this is normal when user pauses)
+            if (event.error === 'no-speech') {
+                console.log('No speech detected, will restart if still listening');
+                if (isListening) {
+                    setTimeout(() => {
+                        if (isListening) {
+                            try {
+                                console.log('Restarting after no-speech');
+                                recognition.start();
+                            } catch (e) {
+                                console.log('Recognition restart after no-speech failed:', e);
+                            }
+                        }
+                    }, 1000);
+                }
+                if (userInput) {
+                    userInput.placeholder = 'No speech detected. Please speak...';
+                }
+                return;
+            }
+            
+            // For other errors, stop listening
+            if (event.error !== 'aborted' && event.error !== 'no-speech') {
+                isListening = false;
+                const voiceBtn = document.getElementById('voiceBtn');
+                if (voiceBtn) {
+                    voiceBtn.classList.remove('listening');
+                }
+                
+                if (userInput) {
+                    userInput.placeholder = 'Type your answer here...';
+                }
+                
+                if (event.error === 'not-allowed') {
+                    alert('Microphone access denied. Please enable microphone permissions to use voice input.');
+                } else if (event.error === 'network') {
+                    alert('Network error. Please check your internet connection.');
+                } else if (event.error === 'audio-capture') {
+                    alert('No microphone found. Please connect a microphone and try again.');
+                } else {
+                    console.error('Speech recognition error:', event.error);
+                    alert('Voice recognition error: ' + event.error + '. Please try again.');
+                }
+            }
+        };
+    } else {
+        console.log('Speech recognition not supported');
+        document.addEventListener('DOMContentLoaded', function() {
+            const voiceBtn = document.getElementById('voiceBtn');
+            if (voiceBtn) {
+                voiceBtn.style.display = 'none';
+            }
+        });
+    }
+}
+
+// Initialize on page load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeSpeechRecognition);
 } else {
-    document.addEventListener('DOMContentLoaded', function() {
-        const voiceBtn = document.getElementById('voiceBtn');
-        if (voiceBtn) {
-            voiceBtn.style.display = 'none';
-        }
-    });
+    initializeSpeechRecognition();
 }
 
 function toggleVoiceInput() {
+    console.log('toggleVoiceInput called, isListening:', isListening);
+    
     if (!recognition) {
         alert('Voice recognition is not supported in your browser. Please use Chrome, Edge, or Safari.');
         return;
     }
 
     const voiceBtn = document.getElementById('voiceBtn');
+    const userInput = document.getElementById('userInput');
+    
+    if (!voiceBtn || !userInput) {
+        console.error('Voice button or user input not found');
+        return;
+    }
     
     if (isListening) {
-        recognition.stop();
+        // Stop listening
+        console.log('Stopping voice recognition');
         isListening = false;
+        recognition.stop();
         voiceBtn.classList.remove('listening');
+        
+        // Finalize the text
+        userInput.value = voiceBaseText.trim();
+        updateCharCount();
     } else {
-        recognition.start();
-        isListening = true;
-        voiceBtn.classList.add('listening');
+        // Start listening
+        console.log('Starting voice recognition');
+        // Store the current text as base text
+        voiceBaseText = userInput.value.trim();
+        if (voiceBaseText && !voiceBaseText.endsWith(' ')) {
+            voiceBaseText += ' ';
+        }
+        
+        // Request microphone permission first
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(function(stream) {
+                console.log('Microphone access granted');
+                // Stop the stream as we just needed permission
+                stream.getTracks().forEach(track => track.stop());
+                
+                // Now start recognition
+                try {
+                    recognition.start();
+                    isListening = true;
+                    voiceBtn.classList.add('listening');
+                    userInput.placeholder = 'Listening... Speak now!';
+                    console.log('Voice recognition started successfully');
+                } catch (e) {
+                    console.error('Error starting recognition:', e);
+                    // If already running, stop first then restart
+                    if (e.name === 'InvalidStateError') {
+                        recognition.stop();
+                        setTimeout(() => {
+                            try {
+                                recognition.start();
+                                isListening = true;
+                                voiceBtn.classList.add('listening');
+                                userInput.placeholder = 'Listening... Speak now!';
+                                console.log('Voice recognition restarted successfully');
+                            } catch (e2) {
+                                console.error('Failed to restart recognition:', e2);
+                                alert('Could not start voice recognition. Please try again.');
+                                userInput.placeholder = 'Type your answer here...';
+                            }
+                        }, 300);
+                    } else {
+                        alert('Could not start voice recognition: ' + e.message);
+                        userInput.placeholder = 'Type your answer here...';
+                    }
+                }
+            })
+            .catch(function(err) {
+                console.error('Microphone access denied:', err);
+                alert('Microphone access is required for voice input. Please allow microphone access and try again.');
+                userInput.placeholder = 'Type your answer here...';
+            });
     }
 }
 
@@ -101,7 +316,7 @@ async function startInterview(role) {
             document.getElementById('roleSelection').style.display = 'none';
             document.getElementById('interviewContainer').style.display = 'block';
             document.getElementById('roleTitle').textContent = data.role_name + ' Interview';
-            document.getElementById('questionCounter').textContent = 'Question ' + data.question_count;
+            updateQuestionCounter(data.question_count, data.total_questions || 6);
             
             addMessageToChat('assistant', data.question);
         } else {
@@ -150,7 +365,7 @@ async function sendResponse() {
         
         if (apiResponse.ok) {
             addMessageToChat('assistant', data.question);
-            document.getElementById('questionCounter').textContent = 'Question ' + data.question_count;
+            updateQuestionCounter(data.question_count, data.total_questions || 6);
             
             if (data.is_completed) {
                 interviewCompleted = true;
@@ -307,6 +522,20 @@ function showLoading(show) {
     overlay.style.display = show ? 'flex' : 'none';
 }
 
+function updateQuestionCounter(current, total) {
+    const counter = document.getElementById('questionCounter');
+    const progressBar = document.getElementById('progressBar');
+    
+    if (counter) {
+        counter.textContent = `Question ${current} of ${total}`;
+    }
+    
+    if (progressBar) {
+        const percentage = (current / total) * 100;
+        progressBar.style.width = percentage + '%';
+    }
+}
+
 function downloadFeedback() {
     if (!currentFeedback) {
         alert('No feedback available to download.');
@@ -387,3 +616,4 @@ function downloadFeedback() {
     document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
 }
+
