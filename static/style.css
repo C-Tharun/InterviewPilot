@@ -487,6 +487,10 @@ body {
 
 .feedback-actions {
     text-align: center;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
 }
 
 .loading-overlay {
@@ -563,5 +567,13 @@ body {
     .input-actions {
         width: 100%;
         justify-content: flex-end;
+    }
+    
+    .feedback-actions {
+        flex-direction: column;
+    }
+    
+    .feedback-actions button {
+        width: 100%;
     }
 }

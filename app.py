@@ -211,7 +211,10 @@ Provide your feedback as a valid JSON object with the following structure:
     "recommendations": ["<rec1>", "<rec2>", ...]
 }}
 
-IMPORTANT: Return ONLY valid JSON, no markdown formatting, no code blocks, no explanations.
+CRITICAL REQUIREMENTS:
+1. ALWAYS provide at least 2-3 strengths, even if the performance was poor. Find positive aspects like effort, willingness to learn, honesty, etc.
+2. The strengths array must NEVER be empty.
+3. Return ONLY valid JSON, no markdown formatting, no code blocks, no explanations.
 """
 
     try:
@@ -253,6 +256,14 @@ IMPORTANT: Return ONLY valid JSON, no markdown formatting, no code blocks, no ex
         for field in required_fields:
             if field not in feedback:
                 feedback[field] = {} if field in ["communication", "technical_depth", "clarity", "confidence"] else []
+        
+        # Ensure strengths is never empty
+        if not feedback.get("strengths") or len(feedback["strengths"]) == 0:
+            feedback["strengths"] = [
+                "Demonstrated effort and engagement during the interview",
+                "Showed willingness to learn and improve",
+                "Maintained a positive attitude throughout the process"
+            ]
 
         session.clear()
         return jsonify(feedback)
