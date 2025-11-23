@@ -3,10 +3,10 @@
 An intelligent, adaptive AI-powered web application that conducts realistic mock interviews for various job roles. Built with Flask and Groq's FREE Llama 3.3 70B model, featuring real-time performance adaptation, resume-based context awareness, and a modern, professional UI.
 
 ## 🏗️ Architecture Diagram
-
 Below is the high-level architecture of the AI Mock Interview Platform:
 
-![Architecture Diagram](static\diagram-export-23-11-2025-1_19_06-pm.png)
+![Architecture Diagram](static/images/architecture.png)
+
 
 
 ## 🌟 Key Features
