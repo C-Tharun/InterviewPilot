@@ -295,10 +295,47 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-async function startInterview(role) {
+let selectedRole = null;
+
+function selectRole(role) {
+    selectedRole = role;
+    document.getElementById('roleSelection').style.display = 'none';
+    document.getElementById('personaSelection').style.display = 'block';
+}
+
+function selectPersona(persona) {
+    if (!selectedRole) return;
+    startInterview(selectedRole, persona);
+}
+
+function goBackToRoles() {
+    document.getElementById('personaSelection').style.display = 'none';
+    document.getElementById('roleSelection').style.display = 'block';
+    selectedRole = null;
+}
+
+async function startInterview(role, persona = 'neutral') {
     currentRole = role;
     interviewCompleted = false;
     
+    // Re-enable input when starting new interview
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const voiceBtn = document.getElementById('voiceBtn');
+    
+    if (userInput) {
+        userInput.disabled = false;
+        userInput.placeholder = 'Type your answer here...';
+    }
+    if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Send';
+    }
+    if (voiceBtn) {
+        voiceBtn.disabled = false;
+    }
+    
+    document.getElementById('personaSelection').style.display = 'none';
     showLoading(true);
     
     try {
@@ -307,18 +344,20 @@ async function startInterview(role) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ role: role })
+            body: JSON.stringify({ role: role, persona: persona })
         });
 
         const data = await response.json();
         
         if (response.ok) {
-            document.getElementById('roleSelection').style.display = 'none';
             document.getElementById('interviewContainer').style.display = 'block';
             document.getElementById('roleTitle').textContent = data.role_name + ' Interview';
             updateQuestionCounter(data.question_count, data.total_questions || 6);
             
             addMessageToChat('assistant', data.question);
+            
+            // Show voice tooltip on interview start
+            showVoiceTooltip();
         } else {
             alert('Error: ' + (data.error || 'Failed to start interview'));
         }
@@ -340,7 +379,10 @@ async function sendResponse() {
     }
     
     if (interviewCompleted) {
-        alert('Interview is completed. Please view feedback.');
+        const viewFeedback = confirm('Interview is completed. Would you like to view your feedback?');
+        if (viewFeedback) {
+            getFeedback();
+        }
         return;
     }
     
@@ -365,10 +407,19 @@ async function sendResponse() {
         
         if (apiResponse.ok) {
             addMessageToChat('assistant', data.question);
-            updateQuestionCounter(data.question_count, data.total_questions || 6);
+            // Ensure question_count and total_questions are valid numbers
+            const questionCount = data.question_count || 1;
+            const totalQuestions = data.total_questions || 6;
+            updateQuestionCounter(questionCount, totalQuestions);
             
-            if (data.is_completed) {
+            // Check if interview is completed (from backend or from AI's message)
+            const isCompleted = data.is_completed || checkIfInterviewConcluded(data.question);
+            
+            if (isCompleted) {
                 interviewCompleted = true;
+                // Disable input immediately when interview is completed
+                disableInterviewInput();
+                // Show feedback prompt after a short delay
                 setTimeout(() => {
                     showFeedbackPrompt();
                 }, 2000);
@@ -408,9 +459,49 @@ function addMessageToChat(role, content) {
 }
 
 function showFeedbackPrompt() {
+    // Automatically show feedback after interview completion
+    // Small delay to let user see the final message
     const confirmed = confirm('Interview completed! Would you like to see your detailed feedback?');
     if (confirmed) {
         getFeedback();
+    } else {
+        // If user cancels, still disable input but allow them to view feedback later
+        disableInterviewInput();
+    }
+}
+
+function checkIfInterviewConcluded(message) {
+    // Check if the AI's message contains conclusion phrases
+    const conclusionPhrases = [
+        'that concludes our interview',
+        'concludes our interview',
+        'thank you for your time',
+        'thank you for taking the time',
+        'this concludes the interview',
+        "we'll wrap up here",
+        "that's all the questions",
+        "we're done here"
+    ];
+    
+    const messageLower = message.toLowerCase();
+    return conclusionPhrases.some(phrase => messageLower.includes(phrase));
+}
+
+function disableInterviewInput() {
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const voiceBtn = document.getElementById('voiceBtn');
+    
+    if (userInput) {
+        userInput.disabled = true;
+        userInput.placeholder = 'Interview completed. Click "View Feedback" to see your results.';
+    }
+    if (sendBtn) {
+        sendBtn.disabled = true;
+        sendBtn.textContent = 'Interview Completed';
+    }
+    if (voiceBtn) {
+        voiceBtn.disabled = true;
     }
 }
 
@@ -445,6 +536,19 @@ async function getFeedback() {
 
 function displayFeedback(feedback) {
     document.getElementById('overallScore').textContent = feedback.overall_score;
+    
+    // Display interview metadata
+    if (feedback.interview_metadata) {
+        const meta = feedback.interview_metadata;
+        document.getElementById('metadataQuestions').textContent = meta.total_questions || '-';
+        document.getElementById('metadataLength').textContent = meta.interview_length || '-';
+        document.getElementById('metadataRole').textContent = meta.role || '-';
+        document.getElementById('metadataPersona').textContent = meta.persona || '-';
+        document.getElementById('metadataTimestamp').textContent = meta.timestamp || '-';
+    }
+    
+    // Display retry questions section
+    displayRetryQuestions(feedback);
     
     const categories = ['communication', 'technical_depth', 'clarity', 'confidence'];
     const categoryIds = {
@@ -522,16 +626,313 @@ function showLoading(show) {
     overlay.style.display = show ? 'flex' : 'none';
 }
 
+function showVoiceTooltip() {
+    const tooltip = document.getElementById('voiceTooltip');
+    if (tooltip) {
+        tooltip.style.display = 'block';
+        // Auto-hide after 10 seconds
+        setTimeout(() => {
+            if (tooltip.style.display !== 'none') {
+                dismissVoiceTooltip();
+            }
+        }, 10000);
+    }
+}
+
+function dismissVoiceTooltip() {
+    const tooltip = document.getElementById('voiceTooltip');
+    if (tooltip) {
+        tooltip.style.display = 'none';
+    }
+}
+
+// Resume Upload Functions
+async function handleResumeUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const fileName = document.getElementById('resumeFileName');
+    const uploadStatus = document.getElementById('resumeUploadStatus');
+    
+    fileName.textContent = file.name;
+    uploadStatus.innerHTML = '<span class="uploading">Uploading...</span>';
+    
+    const formData = new FormData();
+    formData.append('resume', file);
+    
+    try {
+        const response = await fetch('/upload_resume', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            uploadStatus.innerHTML = '<span class="upload-success">✓ Resume uploaded successfully!</span>';
+            fileName.style.color = 'var(--success-green)';
+        } else {
+            uploadStatus.innerHTML = '<span class="upload-error">✗ ' + (data.error || 'Upload failed') + '</span>';
+            fileName.textContent = '';
+        }
+    } catch (error) {
+        console.error('Upload error:', error);
+        uploadStatus.innerHTML = '<span class="upload-error">✗ Upload failed. Please try again.</span>';
+        fileName.textContent = '';
+    }
+}
+
+// Retry Question Functions
+let currentRetryQuestionIndex = -1;
+let currentRetryQuestion = '';
+
+function displayRetryQuestions(feedback) {
+    const retrySection = document.getElementById('retryQuestionsSection');
+    const retryList = document.getElementById('retryQuestionsList');
+    
+    if (!feedback.question_details || feedback.question_details.length === 0) {
+        retrySection.style.display = 'none';
+        return;
+    }
+    
+    const poorQuestions = feedback.question_details.filter(q => q.can_retry !== false && q.original_score < 4.0);
+    
+    if (poorQuestions.length === 0) {
+        retrySection.style.display = 'none';
+        return;
+    }
+    
+    retrySection.style.display = 'block';
+    retryList.innerHTML = '';
+    
+    poorQuestions.forEach((question, index) => {
+        // Find original index in question_details array
+        const originalIndex = feedback.question_details.findIndex(q => 
+            q.question === question.question && q.question_number === question.question_number
+        );
+        
+        const questionDiv = document.createElement('div');
+        questionDiv.className = 'retry-question-item';
+        
+        // Store data in data attributes to avoid syntax errors
+        questionDiv.setAttribute('data-question-index', originalIndex);
+        questionDiv.setAttribute('data-question-text', question.question);
+        
+        questionDiv.innerHTML = `
+            <div class="retry-question-content">
+                <div class="retry-question-header">
+                    <span class="retry-question-number">Question ${question.question_number}</span>
+                    <span class="retry-question-score">Score: ${question.original_score.toFixed(1)}/10</span>
+                </div>
+                <p class="retry-question-text">${question.question}</p>
+                ${question.retry_score ? `
+                    <div class="retry-result">
+                        <strong>Retry Score: ${question.retry_score.toFixed(1)}/10</strong>
+                        <p>${question.retry_feedback || ''}</p>
+                    </div>
+                ` : ''}
+            </div>
+            ${question.can_retry !== false ? `
+                <button class="btn-primary btn-retry" type="button">
+                    🔄 Retry This Question
+                </button>
+            ` : '<span class="retry-complete">✓ Completed</span>'}
+        `;
+        
+        // Add event listener to retry button
+        const retryButton = questionDiv.querySelector('.btn-retry');
+        if (retryButton) {
+            retryButton.addEventListener('click', () => {
+                openRetryOverlay(originalIndex, question.question);
+            });
+        }
+        
+        retryList.appendChild(questionDiv);
+    });
+}
+
+async function openRetryOverlay(questionIndex, questionText) {
+    currentRetryQuestionIndex = questionIndex;
+    currentRetryQuestion = questionText;
+    
+    const overlay = document.getElementById('retryOverlay');
+    const retryMessages = document.getElementById('retryMessages');
+    
+    overlay.style.display = 'flex';
+    
+    // Show loading
+    retryMessages.innerHTML = `
+        <div class="message assistant">
+            <div class="message-avatar">🤖</div>
+            <div class="message-bubble">Loading question...</div>
+        </div>
+    `;
+    
+    // Blur the feedback container
+    document.getElementById('feedbackContainer').style.filter = 'blur(5px)';
+    document.getElementById('feedbackContainer').style.pointerEvents = 'none';
+    
+    // Fetch the retry question from server
+    try {
+        const response = await fetch('/retry_question', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                question_index: questionIndex,
+                question_text: questionText
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            retryMessages.innerHTML = `
+                <div class="message assistant">
+                    <div class="message-avatar">🤖</div>
+                    <div class="message-bubble">${data.question}</div>
+                </div>
+            `;
+        } else {
+            retryMessages.innerHTML = `
+                <div class="message assistant">
+                    <div class="message-avatar">🤖</div>
+                    <div class="message-bubble">${questionText}</div>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error fetching retry question:', error);
+        retryMessages.innerHTML = `
+            <div class="message assistant">
+                <div class="message-avatar">🤖</div>
+                <div class="message-bubble">${questionText}</div>
+            </div>
+        `;
+    }
+}
+
+function closeRetryOverlay() {
+    const overlay = document.getElementById('retryOverlay');
+    overlay.style.display = 'none';
+    
+    // Unblur the feedback container
+    document.getElementById('feedbackContainer').style.filter = 'none';
+    document.getElementById('feedbackContainer').style.pointerEvents = 'auto';
+    
+    // Clear retry input
+    document.getElementById('retryInput').value = '';
+    currentRetryQuestionIndex = -1;
+    currentRetryQuestion = '';
+}
+
+async function submitRetryAnswer() {
+    const answer = document.getElementById('retryInput').value.trim();
+    if (!answer) {
+        alert('Please enter an answer');
+        return;
+    }
+    
+    const retryMessages = document.getElementById('retryMessages');
+    const retryInput = document.getElementById('retryInput');
+    
+    // Add user message
+    const userMsg = document.createElement('div');
+    userMsg.className = 'message user';
+    userMsg.innerHTML = `
+        <div class="message-avatar">👤</div>
+        <div class="message-bubble">${answer}</div>
+    `;
+    retryMessages.appendChild(userMsg);
+    retryInput.value = '';
+    
+    // Show loading
+    const loadingMsg = document.createElement('div');
+    loadingMsg.className = 'message assistant';
+    loadingMsg.innerHTML = `
+        <div class="message-avatar">🤖</div>
+        <div class="message-bubble">Evaluating your answer...</div>
+    `;
+    retryMessages.appendChild(loadingMsg);
+    retryMessages.scrollTop = retryMessages.scrollHeight;
+    
+    try {
+        const response = await fetch('/submit_retry_answer', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                answer: answer,
+                question_index: currentRetryQuestionIndex,
+                original_question: currentRetryQuestion
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Remove loading message
+            loadingMsg.remove();
+            
+            // Add feedback message
+            const feedbackMsg = document.createElement('div');
+            feedbackMsg.className = 'message assistant';
+            feedbackMsg.innerHTML = `
+                <div class="message-avatar">🤖</div>
+                <div class="message-bubble">
+                    <strong>Retry Score: ${data.retry_score.toFixed(1)}/10</strong><br>
+                    ${data.retry_feedback}
+                </div>
+            `;
+            retryMessages.appendChild(feedbackMsg);
+            
+            // Update currentFeedback with retry data
+            if (currentFeedback && currentFeedback.question_details && currentFeedback.question_details[currentRetryQuestionIndex]) {
+                currentFeedback.question_details[currentRetryQuestionIndex].retry_score = data.retry_score;
+                currentFeedback.question_details[currentRetryQuestionIndex].retry_feedback = data.retry_feedback;
+                if (data.is_satisfactory) {
+                    currentFeedback.question_details[currentRetryQuestionIndex].can_retry = false;
+                }
+            }
+            
+            // Close overlay after 3 seconds and refresh feedback
+            setTimeout(() => {
+                closeRetryOverlay();
+                // Refresh feedback display to update retry status
+                displayFeedback(currentFeedback);
+            }, 3000);
+        } else {
+            alert('Error: ' + (data.error || 'Failed to submit answer'));
+            loadingMsg.remove();
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Network error. Please try again.');
+        loadingMsg.remove();
+    }
+}
+
 function updateQuestionCounter(current, total) {
     const counter = document.getElementById('questionCounter');
     const progressBar = document.getElementById('progressBar');
+    
+    // Ensure values are valid numbers
+    current = Number(current) || 1;
+    total = Number(total) || 6;
+    
+    // Ensure current doesn't exceed total (cap it)
+    if (current > total) {
+        current = total;
+    }
     
     if (counter) {
         counter.textContent = `Question ${current} of ${total}`;
     }
     
     if (progressBar) {
-        const percentage = (current / total) * 100;
+        const percentage = Math.min((current / total) * 100, 100);
         progressBar.style.width = percentage + '%';
     }
 }

@@ -3,4 +3,6 @@ requests
 python-dotenv
 groq
 gunicorn==21.2.0
+PyPDF2==3.0.1
+
 
