@@ -415,7 +415,10 @@ async function sendResponse() {
             // Check if interview is completed (from backend or from AI's message)
             const isCompleted = data.is_completed || checkIfInterviewConcluded(data.question);
             
-            if (isCompleted) {
+            // Also check if we've reached the goal count
+            const reachedGoal = questionCount >= totalQuestions;
+            
+            if (isCompleted || reachedGoal) {
                 interviewCompleted = true;
                 // Disable input immediately when interview is completed
                 disableInterviewInput();
@@ -690,20 +693,78 @@ function displayRetryQuestions(feedback) {
     const retrySection = document.getElementById('retryQuestionsSection');
     const retryList = document.getElementById('retryQuestionsList');
     
+    // Safety check for elements
+    if (!retrySection || !retryList) {
+        console.error('Retry questions section elements not found');
+        return;
+    }
+    
+    // Debug: Log feedback data
+    console.log('displayRetryQuestions - feedback:', feedback);
+    console.log('displayRetryQuestions - question_details:', feedback.question_details);
+    
+    // Check if question_details exists and has items
     if (!feedback.question_details || feedback.question_details.length === 0) {
+        console.log('No question_details found, hiding retry section');
         retrySection.style.display = 'none';
         return;
     }
     
-    const poorQuestions = feedback.question_details.filter(q => q.can_retry !== false && q.original_score < 4.0);
+    // Filter questions that can be retried (score < 5.0 and can_retry is not false)
+    console.log('All question_details:', JSON.stringify(feedback.question_details, null, 2));
     
+    const poorQuestions = feedback.question_details.filter(q => {
+        // Log each question for debugging
+        console.log('Processing question:', {
+            question: q.question?.substring(0, 80),
+            question_number: q.question_number,
+            original_score: q.original_score,
+            can_retry: q.can_retry,
+            can_retry_type: typeof q.can_retry
+        });
+        
+        // Check if can_retry is explicitly false
+        if (q.can_retry === false || q.can_retry === "false") {
+            console.log('Excluding question: can_retry is false');
+            return false;
+        }
+        
+        // Ensure original_score is a number
+        const score = typeof q.original_score === 'number' ? q.original_score : parseFloat(q.original_score);
+        
+        // Include if score is valid and < 7.0, OR if score is missing (defensive)
+        const hasLowScore = (score !== null && !isNaN(score) && score < 7.0) || (score === null || isNaN(score));
+        
+        console.log('Question filter result:', {
+            score,
+            hasLowScore,
+            shouldInclude: hasLowScore
+        });
+        
+        return hasLowScore;
+    });
+    
+    console.log(`Filtered ${poorQuestions.length} poor questions out of ${feedback.question_details.length} total`);
+    
+    // Show section if there are questions to retry
     if (poorQuestions.length === 0) {
+        console.log('No poor questions to retry, hiding section');
+        console.log('Debug: question_details array:', feedback.question_details);
         retrySection.style.display = 'none';
         return;
     }
     
+    console.log(`Showing retry section with ${poorQuestions.length} questions`);
+    console.log('Poor questions to display:', poorQuestions);
+    
+    // Show the retry section - use both display and visibility to ensure it shows
     retrySection.style.display = 'block';
+    retrySection.style.visibility = 'visible';
     retryList.innerHTML = '';
+    
+    // Verify the section is now visible
+    console.log('Retry section display style:', retrySection.style.display);
+    console.log('Retry section computed style:', window.getComputedStyle(retrySection).display);
     
     poorQuestions.forEach((question, index) => {
         // Find original index in question_details array

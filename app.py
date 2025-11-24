@@ -384,31 +384,34 @@ def start_interview():
     resume_summary = session.get("resume_summary", {})
     has_resume = session.get("resume_uploaded", False)
     
-    # Build resume context if available
+    # Build resume context if available - ONLY for the opening question
+    # After the first question, resume context will not be included in subsequent questions
     resume_context = ""
     if has_resume and resume_text:
         resume_preview = resume_text[:1000]  # First 1000 chars for context
         if resume_summary:
             resume_context = f"""
-IMPORTANT - Resume Context Available:
-The candidate has uploaded their resume. Use this information to make the interview context-aware and personalized.
+IMPORTANT - Resume Context Available (for opening question only):
+The candidate has uploaded their resume. Use this information to ask a personalized opening question about their background, experience, or projects.
 
 Resume Summary: {json.dumps(resume_summary, indent=2)}
 Resume Preview: {resume_preview}
 
-When asking questions:
+For the opening question:
 - Reference specific projects, skills, or experiences from their resume
-- Ask follow-up questions about things mentioned in their resume
-- Make connections like "You mentioned working on [X] in your resume... tell me more about that"
+- Ask about their background, experience, or notable projects
+- Make it personalized based on their resume
+
+After this opening question, continue with normal role-specific questions without referencing the resume.
 """
         else:
             resume_context = f"""
-IMPORTANT - Resume Context Available:
-The candidate has uploaded their resume. Use this information to make the interview context-aware.
+IMPORTANT - Resume Context Available (for opening question only):
+The candidate has uploaded their resume. Use this information to ask a personalized opening question.
 
 Resume Content: {resume_preview}
 
-Reference specific details from their resume when asking questions.
+For the opening question, reference their resume to ask about their background or experience. After this, continue with normal role-specific questions.
 """
 
     system_prompt = f"""
@@ -501,8 +504,22 @@ def send_response():
     performance_score = performance_data["performance_score"]
     performance_history.append(performance_score)
     
-    # Track poor questions for retry (score < 4.0)
-    if performance_score < 4.0 and len(history) > 0:
+    # Track poor questions for retry (score < 7.0 or any individual category < 7.0)
+    # Track if overall score is low OR if any critical category is low
+    technical_depth = performance_data.get("technical_depth", 5)
+    confidence = performance_data.get("confidence", 5)
+    clarity = performance_data.get("clarity", 5)
+    
+    should_track = (
+        performance_score < 7.0 or 
+        technical_depth < 7.0 or 
+        confidence < 7.0 or
+        clarity < 7.0
+    )
+    
+    print(f"Performance tracking: score={performance_score:.2f}, tech={technical_depth}, conf={confidence}, clarity={clarity}, should_track={should_track}")
+    
+    if should_track and len(history) > 0:
         # Get the last question asked
         last_question = None
         for msg in reversed(history):
@@ -512,13 +529,21 @@ def send_response():
         
         if last_question:
             question_details = session.get("question_details", [])
-            question_details.append({
-                "question": last_question,
-                "question_number": question_count,
-                "original_score": performance_score,
-                "can_retry": True
-            })
-            session["question_details"] = question_details
+            # Check if this question is already tracked (avoid duplicates)
+            question_already_tracked = any(
+                q.get("question") == last_question and q.get("question_number") == question_count 
+                for q in question_details
+            )
+            
+            if not question_already_tracked:
+                question_details.append({
+                    "question": last_question,
+                    "question_number": question_count,
+                    "original_score": performance_score,
+                    "can_retry": True
+                })
+                session["question_details"] = question_details
+                print(f"Tracked question for retry: Q{question_count}, score={performance_score}")
     
     # Calculate average performance for context
     avg_performance = sum(performance_history) / len(performance_history) if performance_history else 5.0
@@ -577,20 +602,30 @@ def send_response():
     target_goal = session.get("locked_goal_count") or dynamic_goal_count
     # Ensure target_goal never exceeds 9 (hard limit)
     target_goal = min(target_goal, 9)
+    # Be more aggressive about concluding when resume is present
+    has_resume = session.get("resume_uploaded", False)
+    # If we're at or past goal, we should conclude (especially strict with resume)
     should_conclude = ((next_question_number >= target_goal) and (question_count >= 3)) or (next_question_number >= 9)
+    # If resume is present, be EXTRA strict - conclude as soon as we reach goal
+    if has_resume:
+        # With resume, conclude immediately when we reach goal (no extra questions)
+        if next_question_number >= target_goal and question_count >= 2:  # Lower threshold with resume
+            should_conclude = True
+        # Also conclude if we're at goal regardless of question count
+        if next_question_number >= target_goal:
+            should_conclude = True
     
-    # Get resume context if available
+    # Get resume context if available - ONLY use for first question (question_count == 0)
+    # After first question, use normal role-based questions without resume context
     resume_text = session.get("resume_text", "")
     resume_summary = session.get("resume_summary", {})
-    has_resume = session.get("resume_uploaded", False)
     
+    # Resume context is ONLY used in the opening question (start_interview)
+    # After the opening question, we use normal role-based questions without resume context
+    # This prevents the AI from continuing to reference resume and extending the interview
     resume_context = ""
-    if has_resume and resume_text:
-        resume_preview = resume_text[:800]
-        if resume_summary:
-            resume_context = f"\nResume Context Available: {json.dumps(resume_summary, indent=2)}\nReference their resume when relevant.\n"
-        else:
-            resume_context = f"\nResume Context: {resume_preview}\nReference their resume when relevant.\n"
+    # Do NOT include resume context in send_response - only in start_interview
+    # This ensures only the first question is resume-based, then normal role questions
     
     system_prompt = f"""
 You are an expert interviewer for a {role_info['name']} role.
@@ -613,13 +648,23 @@ Your behavior:
 - If they struggle, simplify and provide encouragement (but maintain your persona style)
 - Stay professional and role-specific
 - ALWAYS ask a question - never end abruptly without asking something
-- {"CRITICAL: This is the FINAL question. After the candidate responds to this question, you MUST conclude the interview. End with a clear closing statement like: 'That concludes our interview. Thank you for your time and for sharing your insights with me today!' or 'Thank you for your time today. We'll be in touch soon.' Make sure your conclusion is clear and definitive." if should_conclude else "Continue with another question after they respond."}
+- {"CRITICAL AND MANDATORY: This is the ABSOLUTE FINAL question. You MUST conclude the interview after the candidate responds. End with a clear, definitive closing statement like: 'That concludes our interview. Thank you for your time and for sharing your insights with me today!' or 'Thank you for your time today. We'll be in touch soon.' You MUST NOT ask any additional questions. The interview is ending NOW. Ignore any resume topics you haven't covered - the interview length is fixed and must end here." if should_conclude else "Continue with another question after they respond, but be mindful that the interview has a fixed length."}
 - NEVER end the interview in the middle of asking a question
 - Always give the candidate a chance to respond before concluding
+- CRITICAL: When instructed to conclude, you MUST conclude immediately - do NOT continue asking questions for any reason, including resume topics
+- The interview length is FIXED and cannot be extended, regardless of how much resume information is available
 """
 
     try:
         messages = [{"role": "system", "content": system_prompt}] + history
+
+        # If we should conclude and have resume, add extra emphasis to conclusion
+        if should_conclude and has_resume:
+            # Add a final instruction to the messages to ensure conclusion
+            messages.append({
+                "role": "user", 
+                "content": "IMPORTANT: You MUST conclude the interview now. Do not ask any more questions. End with a clear closing statement."
+            })
 
         response = groq_client.chat.completions.create(
             model=MODEL_NAME,
@@ -627,6 +672,18 @@ Your behavior:
         )
 
         next_question = response.choices[0].message.content
+        
+        # If we should conclude, ALWAYS force add a conclusion (especially important with resume)
+        if should_conclude:
+            conclusion_indicators = ["concludes", "thank you", "wrap up", "that's all", "we'll be in touch", "interview is complete"]
+            has_conclusion = any(indicator in next_question.lower() for indicator in conclusion_indicators)
+            if not has_conclusion:
+                # Force add conclusion - be aggressive, especially with resume
+                next_question = next_question.rstrip('.!?') + ". That concludes our interview. Thank you for your time and for sharing your insights with me today!"
+            # Even if it has conclusion, if resume is present, make sure it's clear
+            elif has_resume and not any(phrase in next_question.lower() for phrase in ["that concludes", "concludes our interview"]):
+                # Make conclusion more explicit
+                next_question = next_question.rstrip('.!?') + ". That concludes our interview. Thank you for your time!"
 
         history.append({"role": "assistant", "content": next_question})
 
@@ -666,8 +723,9 @@ Your behavior:
         
         # If we intended to conclude, force completion regardless
         # This ensures interviews end when they should
+        # When should_conclude is True, we MUST mark as completed (especially important with resume context)
         is_completed = (
-            should_conclude or  # We told the AI to conclude, so mark it complete
+            should_conclude or  # We told the AI to conclude, so mark it complete (HIGHEST PRIORITY)
             explicit_conclusion or 
             (has_reached_goal and has_min_questions) or
             force_complete  # Safety: if we've exceeded goal, force completion
@@ -677,17 +735,48 @@ Your behavior:
         if new_question_count >= 9:
             is_completed = True
         
-        # Update session
+        # CRITICAL: If resume is present, be EXTREMELY strict about completion
+        # Force completion immediately when we reach goal (lower threshold with resume)
+        if has_resume:
+            # PRIMARY: With resume, complete as soon as we reach goal (no exceptions)
+            if new_question_count >= target_goal:
+                is_completed = True
+            # Also force if we're past goal (safety)
+            if new_question_count > target_goal:
+                is_completed = True
+            # Final safety: if should_conclude was True, ALWAYS complete (no exceptions)
+            if should_conclude:
+                is_completed = True
+        
+        # Update session - ensure all values are set correctly
         session["conversation_history"] = history
         session["question_count"] = new_question_count
         session["performance_history"] = performance_history
         session["dynamic_goal_count"] = dynamic_goal_count
+        # Force session to be marked as modified
         session.modified = True
+        # Ensure session is saved
+        try:
+            session.permanent = True
+        except:
+            pass
 
         # Use locked goal for total_questions display, otherwise use current dynamic goal
         # Ensure display_total never exceeds 9 (hard limit)
         display_total = session.get("locked_goal_count") or dynamic_goal_count
         display_total = min(display_total, 9)
+        
+        # Debug: Verify question count is correct (count from history as fallback)
+        actual_count_from_history = sum(1 for msg in history if msg.get("role") == "assistant")
+        if actual_count_from_history != new_question_count:
+            # If mismatch, use the actual count from history
+            new_question_count = actual_count_from_history
+            session["question_count"] = new_question_count
+            session.modified = True
+        
+        # Final check: If we're at goal with resume, FORCE completion (no matter what)
+        if has_resume and new_question_count >= target_goal:
+            is_completed = True
         
         return jsonify({
             "question": next_question,
@@ -829,6 +918,9 @@ CRITICAL REQUIREMENTS:
         # Add question details for retry functionality
         question_details = session.get("question_details", [])
         feedback["question_details"] = question_details
+        print(f"Feedback: question_details count = {len(question_details)}")
+        if question_details:
+            print(f"Question details: {json.dumps(question_details, indent=2)}")
         
         # Store necessary data for retry functionality before clearing session
         retry_data = {

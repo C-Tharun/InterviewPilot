@@ -64,8 +64,8 @@ Choose from three different interviewer styles:
 - **Updated Feedback**: Retry scores and feedback are tracked and displayed
 - **Completion Status**: Questions marked as completed when retry score ≥ 5.0
 
-### 🎨 Modern UI/UX
-- **Gradient Backgrounds**: Beautiful, professional color schemes
+### 🎨 UI/UX
+- **Gradient Backgrounds**: Professional color schemes
 - **Smooth Animations**: Slide-in effects, pulse animations, and smooth transitions
 - **Interactive Elements**: Hover effects, animated progress bars, and visual feedback
 - **Progress Tracking**: Visual progress bar showing interview completion with question counter
@@ -260,7 +260,7 @@ gunicorn -w 4 -b 0.0.0.0:5000 app:app
 - ✅ Performance history tracking and rolling averages
 - ✅ Hard limit of 9 questions maximum
 
-### Modern UI/UX Enhancements
+### UI/UX Enhancements
 - ✅ Gradient backgrounds and modern color schemes
 - ✅ Smooth animations and transitions
 - ✅ Interactive hover effects
@@ -295,9 +295,6 @@ If you see warnings about session cookie size being too large:
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 📄 License
-
-This project is open source and available under the MIT License.
 
 ## 👨‍💻 Creator
 
@@ -309,7 +306,6 @@ This project is open source and available under the MIT License.
 ## 🙏 Acknowledgments
 
 - Built with [Groq](https://groq.com/) FREE API and Llama 3.3 70B model
-- UI inspired by modern design systems
 - Fonts provided by [Google Fonts](https://fonts.google.com/)
 - PDF parsing with PyPDF2
 
